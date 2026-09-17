@@ -44,10 +44,9 @@ xmlrpc_list_entry_to_object(xmlrpc_env* env, xmlrpc_value* src, int index) {
   if (env->fault_occurred)
     throw xmlrpc_error_c(env);
 
-  torrent::Object obj = xmlrpc_to_object(env, tmp);
-  xmlrpc_DECREF(tmp);
+  utils::scope_guard guard([tmp]() { xmlrpc_DECREF(tmp); });
 
-  return obj;
+  return xmlrpc_to_object(env, tmp);
 }
 
 int64_t
@@ -77,16 +76,18 @@ xmlrpc_list_entry_to_value(xmlrpc_env* env, xmlrpc_value* src, int index) {
   {
     const char* str;
     xmlrpc_read_string(env, tmp, &str);
+    xmlrpc_DECREF(tmp);
 
     if (env->fault_occurred)
       throw xmlrpc_error_c(env);
 
     const char* end = str;
     int64_t v3 = ::strtoll(str, (char**)&end, 0);
+    bool invalid = *str == '\0' || *end != '\0';
 
     ::free((void*)str);
 
-    if (*str == '\0' || *end != '\0')
+    if (invalid)
       throw xmlrpc_error_c(XMLRPC_TYPE_ERROR, "Invalid index.");
 
     return v3;
@@ -211,10 +212,10 @@ xmlrpc_to_object(xmlrpc_env* env, xmlrpc_value* value, int call_type, rpc::targe
       if (env->fault_occurred)
         throw xmlrpc_error_c(env);
 
+      utils::scope_guard guard([tmp]() { xmlrpc_DECREF(tmp); });
+
       if (target != nullptr)
         std::tie(*target, *deleter) = xmlrpc_to_target(env, tmp, call_type);
-
-      xmlrpc_DECREF(tmp);
 
       if (env->fault_occurred)
         throw xmlrpc_error_c(env);
