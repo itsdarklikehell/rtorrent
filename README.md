@@ -89,6 +89,6 @@ compiled if the user wishes to avoid using OpenSSL.
 
 ## Gource Development Visualization
 
-[![Gource](https://img.youtube.com/vi/maxresdefault.jpg)](gource.mp4)
+![RTorrent — development timeline](gource.mp4)
 
 See [gource.mp4](gource.mp4) for a visual history of rtorrent's development (1280×720, 25fps, H.264). Regenerate with `./build_gource_fast.sh`.
