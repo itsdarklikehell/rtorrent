@@ -1,4 +1,5 @@
 TESTS = \
+	rtorrent_Test_Core \
 	rtorrent_Test_Rpc \
 	rtorrent_Test_Src
 
@@ -7,6 +8,7 @@ check_PROGRAMS = $(TESTS)
 rtorrent_Test_LDADD = \
 	../src/libsub_root.a
 
+rtorrent_Test_Core_LDADD = $(rtorrent_Test_LDADD)
 rtorrent_Test_Rpc_LDADD = $(rtorrent_Test_LDADD)
 rtorrent_Test_Src_LDADD = $(rtorrent_Test_LDADD)
 
@@ -30,6 +32,10 @@ rtorrent_Test_Common = \
 	helpers/test_utils.h \
 	helpers/utils.h
 
+rtorrent_Test_Core_SOURCES = $(rtorrent_Test_Common) \
+	core/test_view.cc \
+	core/test_view.h
+
 rtorrent_Test_Rpc_SOURCES = $(rtorrent_Test_Common) \
 	rpc/test_command.cc \
 	rpc/test_command.h \
@@ -45,12 +51,18 @@ rtorrent_Test_Rpc_SOURCES = $(rtorrent_Test_Common) \
 	rpc/test_command_slot.h \
 	rpc/test_object_storage.cc \
 	rpc/test_object_storage.h \
+	rpc/test_parse.cc \
+	rpc/test_parse.h \
 	rpc/test_parse_options.cc \
-	rpc/test_parse_options.h
+	rpc/test_parse_options.h \
+	rpc/test_rpc_manager.cc \
+	rpc/test_rpc_manager.h
 
 rtorrent_Test_Src_SOURCES = $(rtorrent_Test_Common) \
 	src/test_command_dynamic.cc \
 	src/test_command_dynamic.h \
+	src/test_command_groups.cc \
+	src/test_command_groups.h \
 	src/test_command_ip.cc \
 	src/test_command_ip.h \
 	src/test_command_system.cc \
@@ -59,9 +71,27 @@ rtorrent_Test_Src_SOURCES = $(rtorrent_Test_Common) \
 	src/test_command_path.h \
 	src/test_command_string.cc \
 	src/test_command_string.h \
+	src/test_command_throttle.cc \
+	src/test_command_throttle.h \
+	src/test_command_tracker.cc \
+	src/test_command_tracker.h \
+	src/test_download_list.cc \
+	src/test_download_list.h \
+	src/test_input_path_input.cc \
+	src/test_input_path_input.h \
+	src/test_session_commit.cc \
+	src/test_session_commit.h \
+	src/test_session_storer.cc \
+	src/test_session_storer.h \
+	src/test_setup.cc \
+	src/test_setup.h \
+	src/test_ui_download_list.cc \
+	src/test_ui_download_list.h \
 	src/test_watch_ready_queue.cc \
 	src/test_watch_ready_queue.h
 
+rtorrent_Test_Core_CXXFLAGS = $(CPPUNIT_CFLAGS)
+rtorrent_Test_Core_LDFLAGS = $(CPPUNIT_LIBS) -ldl
 rtorrent_Test_Rpc_CXXFLAGS = $(CPPUNIT_CFLAGS)
 rtorrent_Test_Rpc_LDFLAGS = $(CPPUNIT_LIBS) -ldl
 rtorrent_Test_Src_CXXFLAGS = $(CPPUNIT_CFLAGS)

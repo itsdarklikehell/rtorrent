@@ -93,7 +93,8 @@ SCgiTask::close() {
   // The callbacks are guaranteed to be finished/canceled at this point.
   auto lock = std::lock_guard<std::mutex>(m_result_mutex);
 
-  m_buffer.clear();
+  // clear() would keep the capacity, and the task is pooled for the lifetime of the process.
+  std::vector<char>().swap(m_buffer);
 }
 
 void
@@ -404,7 +405,7 @@ void
 SCgiTask::receive_write(const char* buffer, uint32_t length) {
   assert(torrent::this_thread::thread() == torrent::main_thread::thread());
 
-  if (buffer == nullptr || length > (100 << 20))
+  if (buffer == nullptr || length > max_response_size)
     throw torrent::internal_error("SCgiTask::receive_write(...) received bad input.");
 
   // Main thread callback already locked this mutex.

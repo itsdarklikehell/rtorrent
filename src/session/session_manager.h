@@ -1,6 +1,7 @@
 #ifndef RTORRENT_SESSION_SESSION_MANAGER_H
 #define RTORRENT_SESSION_SESSION_MANAGER_H
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -99,9 +100,13 @@ private:
   bool                         m_use_fsyncdisk{true};
   bool                         m_use_lock{true};
 
-  align_cacheline std::mutex   m_mutex;
+  align_cacheline
 
-  bool                         m_active{};
+  std::atomic<bool>            m_active{};
+
+  align_cacheline
+
+  std::mutex                   m_mutex;
 
   std::deque<SaveRequest>      m_save_requests;
   std::atomic<size_t>          m_save_request_counter{};

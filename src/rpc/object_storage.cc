@@ -26,10 +26,7 @@ const size_t object_storage::key_size;
 
 object_storage::iterator
 object_storage::find_raw_string(const torrent::raw_string& key) {
-  fixed_key_type<64> k;
-  k.set_c_str(key.data());
-
-  return find(k);
+  return find(key_type::from_raw_string(key));
 }
 
 object_storage::iterator
@@ -64,8 +61,12 @@ object_storage::insert(const char* key_data, uint32_t key_size, const torrent::O
   if (std::find(key_data, key_data + key_size, '\0') != key_data + key_size)
     throw torrent::input_error("Found nul-char in string.");
 
-  // Check for size > key_size.
-  // Check for empty string.
+  // key_type turns a key this long into the empty key.
+  if (key_size >= object_storage::key_size)
+    throw torrent::input_error("Key is too long.");
+
+  if (key_size == 0)
+    throw torrent::input_error("Key is empty.");
 
   bool use_raw = false;
   torrent::Object object;

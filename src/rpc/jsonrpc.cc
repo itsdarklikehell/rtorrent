@@ -2,8 +2,10 @@
 
 #include "rpc/jsonrpc.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <torrent/common.h>
 #include <torrent/torrent.h>
 #include <torrent/utils/string_manip.h>
@@ -13,6 +15,7 @@
 #include "rpc/command_map.h"
 #include "rpc/nlohmann/json.h"
 #include "rpc/parse_commands.h"
+#include "rpc/scgi_task.h"
 #include "torrent/exceptions.h"
 #include "torrent/object.h"
 #include "utils/functional.h"
@@ -222,13 +225,49 @@ handle_notification(const json& request) noexcept {
   }
 }
 
+namespace {
+
+using json_input_adapter = decltype(nlohmann::detail::input_adapter(std::declval<const char*>(), std::declval<const char*>()));
+using json_dom_parser    = nlohmann::detail::json_sax_dom_parser<json, json_input_adapter>;
+
+class json_depth_limited_parser : public json_dom_parser {
+public:
+  explicit json_depth_limited_parser(json& root) : json_dom_parser(root) {}
+
+  bool start_object(std::size_t length) { return enter() && json_dom_parser::start_object(length); }
+  bool start_array(std::size_t length) { return enter() && json_dom_parser::start_array(length); }
+
+  bool end_object() { m_depth--; return json_dom_parser::end_object(); }
+  bool end_array() { m_depth--; return json_dom_parser::end_array(); }
+
+private:
+  bool enter() { return ++m_depth <= max_json_depth; }
+
+  uint32_t m_depth{0};
+};
+
+} // namespace
+
 bool
 JsonRpc::process(const char* in_buffer, uint32_t length, slot_write callback) {
   json response;
   json body;
 
+  if (length > m_size_limit) {
+    auto err_str = json_error(JSONRPC_INVALID_REQUEST_ERROR, "content size exceeds maximum RPC limit", nullptr).dump();
+
+    return callback(err_str.c_str(), err_str.size());
+  }
+
   try {
-    body = json::parse(in_buffer, in_buffer + length);
+    json_depth_limited_parser handler(body);
+
+    if (!json::sax_parse(in_buffer, in_buffer + length, &handler)) {
+      auto err_str = json_error(JSONRPC_INVALID_REQUEST_ERROR, "maximum nesting depth exceeded", nullptr).dump();
+
+      return callback(err_str.c_str(), err_str.size());
+    }
+
     switch (body.type()) {
     case json::value_t::object: {
       if (!body.contains("id")) {
@@ -263,6 +302,13 @@ JsonRpc::process(const char* in_buffer, uint32_t length, slot_write callback) {
     }
 
     std::string response_str = response.dump();
+
+    if (response_str.size() > SCgiTask::max_response_size) {
+      const auto& id = response.is_object() && response.contains("id") ? response["id"] : json(nullptr);
+      auto err_str = json_error(JSONRPC_INTERNAL_ERROR, "response size exceeds maximum RPC limit", id).dump();
+
+      return callback(err_str.c_str(), err_str.size());
+    }
 
     return callback(response_str.c_str(), response_str.size());
 

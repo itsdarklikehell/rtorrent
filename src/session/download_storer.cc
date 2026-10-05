@@ -2,6 +2,7 @@
 
 #include "download_storer.h"
 
+#include <cerrno>
 #include <fcntl.h>
 #include <fstream>
 #include <unistd.h>
@@ -15,6 +16,13 @@
 #include "globals.h"
 #include "core/download.h"
 #include "utils/directory.h"
+
+// O_DIRECTORY makes the open refuse anything that is not a directory. A
+// platform that does not define it still gets the read-only directory
+// handle fsync needs, so fall back to no extra flag.
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0
+#endif
 
 namespace session {
 
@@ -116,28 +124,36 @@ is_correct_format(const std::string& f) {
 
 void
 save_stream(const std::string& path, bool use_fsyncdisk, const std::stringstream& stream) {
-  std::fstream output(path.c_str(), std::ios::out | std::ios::trunc);
+  // Remove any leftover temporary file first so that O_EXCL only ever fails on
+  // an entry that appeared after the unlink, and O_NOFOLLOW keeps a symlink
+  // planted in the session directory from redirecting the write.
+  if (::unlink(path.c_str()) == -1 && errno != ENOENT)
+    throw torrent::storage_error("failed to remove stale file : " + path);
 
   // TODO: If we cannot open more files, wait for some to finish and try again.
-  if (!output.is_open())
-    throw torrent::storage_error("failed to open file for writing : " + path);
-
-  output << stream.rdbuf();
-
-  if (!output.good())
-    throw torrent::storage_error("failed to write stream to file : " + path);
-
-  // The data only reaches the kernel here, so this is where a full disk is seen.
-  output.close();
-
-  if (!output.good())
-    throw torrent::storage_error("failed to flush stream to file : " + path);
-
-  // Ensure that the new file is actually written to the disk
-  int fd = ::open(path.c_str(), O_WRONLY);
+  int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
 
   if (fd < 0)
-    throw torrent::storage_error("failed to open file descriptor for fsync : " + path);
+    throw torrent::storage_error("failed to open file for writing : " + path);
+
+  const auto  data      = stream.view();
+  std::size_t remaining = data.size();
+  const char* cursor    = data.data();
+
+  while (remaining != 0) {
+    ssize_t result = ::write(fd, cursor, remaining);
+
+    if (result == -1) {
+      if (errno == EINTR)
+        continue;
+
+      ::close(fd);
+      throw torrent::storage_error("failed to write stream to file : " + path);
+    }
+
+    cursor    += result;
+    remaining -= result;
+  }
 
   if (use_fsyncdisk) {
 #ifdef __APPLE__
@@ -152,8 +168,29 @@ save_stream(const std::string& path, bool use_fsyncdisk, const std::stringstream
     }
   }
 
+  // A full disk may only be seen when the descriptor is closed.
   if (::close(fd) == -1)
     throw torrent::storage_error("failed to close file descriptor : " + path);
+}
+
+void
+sync_directory_of(const std::string& path) {
+  auto separator = path.rfind('/');
+  auto directory = separator == std::string::npos ? std::string(".") :
+                   separator == 0                 ? std::string("/") : path.substr(0, separator);
+
+  int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
+
+  if (fd < 0)
+    throw torrent::storage_error("failed to open session directory for sync : " + directory);
+
+  if (::fsync(fd) == -1) {
+    ::close(fd);
+    throw torrent::storage_error("failed to sync session directory : " + directory);
+  }
+
+  if (::close(fd) == -1)
+    throw torrent::storage_error("failed to close session directory : " + directory);
 }
 
 } // namespace anonymous
@@ -183,6 +220,11 @@ DownloadStorer::save_and_move_streams(const std::string& path, bool use_fsyncdis
 
   if (::rename((rtorrent_path + ".new").c_str(), rtorrent_path.c_str()) == -1)
     throw torrent::storage_error("failed to rename rtorrent resume file : " + rtorrent_path);
+
+  // Syncing the files themselves does not persist the renames; the directory
+  // holding them has to be synced for the new names to survive a crash.
+  if (use_fsyncdisk)
+    sync_directory_of(path);
 }
 
 utils::Directory

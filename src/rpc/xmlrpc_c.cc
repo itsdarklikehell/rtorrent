@@ -27,11 +27,11 @@ public:
   virtual ~xmlrpc_error_c() throw() {}
 
   virtual int         type() const throw() { return m_type; }
-  virtual const char* what() const throw() { return m_msg; }
+  virtual const char* what() const throw() { return m_msg.c_str(); }
 
 private:
   int                 m_type;
-  const char*         m_msg;
+  std::string         m_msg;
 };
 
 torrent::Object xmlrpc_to_object(xmlrpc_env* env, xmlrpc_value* value, int call_type = 0, rpc::target_type* target = NULL, std::function<void()>* deleter = NULL);
@@ -440,6 +440,8 @@ XmlRpc::cleanup() {
   xmlrpc_registry_free((xmlrpc_registry*)m_registry);
   xmlrpc_env_clean((xmlrpc_env*)m_env);
   delete (xmlrpc_env*)m_env;
+  m_env = nullptr;
+  m_registry = nullptr;
 }
 
 bool

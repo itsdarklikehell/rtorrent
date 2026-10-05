@@ -1,10 +1,9 @@
 #include "config.h"
 
-#include <cstdio>
+#include <limits>
 #include <torrent/throttle.h>
 #include <torrent/rate.h>
 #include <torrent/download/resource_manager.h>
-#include <torrent/net/socket_address.h>
 
 #include "core/manager.h"
 #include "ui/root.h"
@@ -14,59 +13,6 @@
 #include "globals.h"
 #include "control.h"
 #include "command_helpers.h"
-
-std::pair<uint32_t, uint32_t>
-parse_address_range(const torrent::Object::list_type& args, torrent::Object::list_type::const_iterator itr) {
-  unsigned int prefixWidth, ret;
-  char dummy;
-  char host[1024];
-  torrent::sa_unique_ptr sa;
-
-  ret = std::sscanf(itr->as_string().c_str(), "%1023[^/]/%d%c", host, &prefixWidth, &dummy);
-
-  if (ret < 1)
-    throw torrent::input_error("Invalid address/prefix.");
-
-  try {
-    sa = torrent::sa_copy(torrent::sa_lookup_address(host, AF_INET).get());
-
-  } catch (torrent::input_error& e) {
-    throw torrent::input_error("Could not resolve host: " + std::string(e.what()));
-  }
-
-  uint32_t begin, end;
-
-  auto sa_addr = htonl(reinterpret_cast<sockaddr_in*>(sa.get())->sin_addr.s_addr);
-
-  begin = end = sa_addr;
-
-  if (ret == 2) {
-    if (++itr != args.end())
-      throw torrent::input_error("Cannot specify both network and range end.");
-
-    uint32_t netmask = std::numeric_limits<uint32_t>::max() << (32 - prefixWidth);
-
-    if (prefixWidth >= 32 || sa_addr & ~netmask)
-      throw torrent::input_error("Invalid address/prefix.");
-
-    end = sa_addr | ~netmask;
-
-  } else if (++itr != args.end()) {
-    try {
-      sa = torrent::sa_copy(torrent::sa_lookup_address(itr->as_string(), AF_INET).get());
-
-    } catch (torrent::input_error& e) {
-      throw torrent::input_error("Could not resolve host: " + std::string(e.what()));
-    }
-
-    sa_addr = htonl(reinterpret_cast<sockaddr_in*>(sa.get())->sin_addr.s_addr);
-    end = sa_addr;
-  }
-
-  // convert to [begin, end) making sure the end doesn't overflow
-  // (this precludes 255.255.255.255 from ever matching, but that's not a real IP anyway)
-  return std::make_pair((uint32_t)begin, (uint32_t)std::max(end, end + 1));
-}
 
 torrent::Object
 apply_throttle(const torrent::Object::list_type& args, bool up) {
@@ -83,10 +29,15 @@ apply_throttle(const torrent::Object::list_type& args, bool up) {
     throw torrent::input_error("Missing throttle rate for '" + name + "'.");
 
   int64_t rate;
-  rpc::parse_whole_value_nothrow(arg_itr->as_string().c_str(), &rate);
+
+  if (!rpc::parse_whole_value_nothrow(arg_itr->as_string().c_str(), &rate))
+    throw torrent::input_error("Invalid throttle rate for '" + name + "'.");
 
   if (rate < 0)
     throw torrent::input_error("Throttle rate must be non-negative.");
+
+  if (rate > (std::numeric_limits<int64_t>::max() >> 10))
+    throw torrent::input_error("Throttle rate is too large.");
 
   auto itr = control->core()->throttles().find(name);
 
@@ -138,6 +89,24 @@ throttle_update(const char* variable, int64_t value) {
   return torrent::Object();
 }
 
+static unsigned int
+throttle_rate_to_kb(int64_t rate) {
+  if (rate < 0 || rate > std::numeric_limits<unsigned int>::max() - 1)
+    throw torrent::input_error("Throttle rate must be between 0 and 4294967294.");
+
+  return static_cast<unsigned int>(rate >> 10);
+}
+
+static void
+set_up_throttle_i64(ui::Root* root, int64_t rate) {
+  root->set_up_throttle(throttle_rate_to_kb(rate));
+}
+
+static void
+set_down_throttle_i64(ui::Root* root, int64_t rate) {
+  root->set_down_throttle(throttle_rate_to_kb(rate));
+}
+
 void
 initialize_command_throttle() {
   CMD2_ANY         ("throttle.unchoked_uploads",       std::bind(&torrent::ResourceManager::currently_upload_unchoked, torrent::resource_manager()));
@@ -174,13 +143,13 @@ initialize_command_throttle() {
   CMD2_ANY         ("throttle.global_up.rate",              std::bind(&torrent::Rate::rate, torrent::up_rate()));
   CMD2_ANY         ("throttle.global_up.total",             std::bind(&torrent::Rate::total, torrent::up_rate()));
   CMD2_ANY         ("throttle.global_up.max_rate",          std::bind(&torrent::Throttle::max_rate, torrent::up_throttle_global()));
-  CMD2_ANY_VALUE_V ("throttle.global_up.max_rate.set",      std::bind(&ui::Root::set_up_throttle_i64, control->ui(), std::placeholders::_2));
-  CMD2_ANY_VALUE_KB("throttle.global_up.max_rate.set_kb",   std::bind(&ui::Root::set_up_throttle_i64, control->ui(), std::placeholders::_2));
+  CMD2_ANY_VALUE_V ("throttle.global_up.max_rate.set",      std::bind(&set_up_throttle_i64, control->ui(), std::placeholders::_2));
+  CMD2_ANY_VALUE_KB("throttle.global_up.max_rate.set_kb",   std::bind(&set_up_throttle_i64, control->ui(), std::placeholders::_2));
   CMD2_ANY         ("throttle.global_down.rate",            std::bind(&torrent::Rate::rate, torrent::down_rate()));
   CMD2_ANY         ("throttle.global_down.total",           std::bind(&torrent::Rate::total, torrent::down_rate()));
   CMD2_ANY         ("throttle.global_down.max_rate",        std::bind(&torrent::Throttle::max_rate, torrent::down_throttle_global()));
-  CMD2_ANY_VALUE_V ("throttle.global_down.max_rate.set",    std::bind(&ui::Root::set_down_throttle_i64, control->ui(), std::placeholders::_2));
-  CMD2_ANY_VALUE_KB("throttle.global_down.max_rate.set_kb", std::bind(&ui::Root::set_down_throttle_i64, control->ui(), std::placeholders::_2));
+  CMD2_ANY_VALUE_V ("throttle.global_down.max_rate.set",    std::bind(&set_down_throttle_i64, control->ui(), std::placeholders::_2));
+  CMD2_ANY_VALUE_KB("throttle.global_down.max_rate.set_kb", std::bind(&set_down_throttle_i64, control->ui(), std::placeholders::_2));
 
   // Temporary names, need to change this to accept real rates rather
   // than kB.
